@@ -2,11 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 import numpy as np
-import folium
-from streamlit_folium import st_folium
+import plotly.express as px
 
-# 🔧 Page setup
-st.set_page_config(page_title="KrowdDash Insights", layout="wide")
+st.set_page_config(page_title="KrowdDash", layout="wide")
 
 # 📂 Load all CSVs from /data
 DATA_DIR = "data"
@@ -16,9 +14,12 @@ csv_files = [f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
 def load_all_data():
     data_frames = []
     for file in csv_files:
-        df = pd.read_csv(os.path.join(DATA_DIR, file))
-        df["source"] = file.replace("_clean.csv", "")
-        data_frames.append(df)
+        try:
+            df = pd.read_csv(os.path.join(DATA_DIR, file))
+            df["source"] = file.replace("_clean.csv", "")
+            data_frames.append(df)
+        except Exception as e:
+            st.warning(f"Could not load {file}: {e}")
     return pd.concat(data_frames, ignore_index=True)
 
 df = load_all_data()
@@ -48,20 +49,21 @@ st.title("📊 KrowdDash: All-in-One Insights")
 st.subheader("Summary Statistics")
 st.write(filtered_df.describe(include="all"))
 
-# 🗺️ Heatmap
-st.subheader("🗺️ Activity Heatmap")
+# 🗺️ Plotly Heatmap (Scatter Map)
+st.subheader("🗺️ Activity Map")
 if "Latitude" in filtered_df.columns and "Longitude" in filtered_df.columns:
-    m = folium.Map(location=[filtered_df["Latitude"].mean(), filtered_df["Longitude"].mean()], zoom_start=12)
-    for _, row in filtered_df.iterrows():
-        folium.CircleMarker(
-            location=[row["Latitude"], row["Longitude"]],
-            radius=min(row["foot_traffic"] / 50, 10),
-            popup=f"{row['source']}",
-            color="blue",
-            fill=True,
-            fill_opacity=0.6
-        ).add_to(m)
-    st_folium(m, width=900, height=500)
+    fig = px.scatter_mapbox(
+        filtered_df,
+        lat="Latitude",
+        lon="Longitude",
+        color="source",
+        size="foot_traffic",
+        hover_name="source",
+        zoom=10,
+        height=600
+    )
+    fig.update_layout(mapbox_style="open-street-map")
+    st.plotly_chart(fig, use_container_width=True)
 else:
     st.warning("No location data found (Latitude/Longitude missing).")
 
@@ -71,7 +73,3 @@ st.dataframe(filtered_df)
 
 # 📥 Export
 st.download_button("Download Filtered CSV", filtered_df.to_csv(index=False), "krowddash_filtered.csv", "text/csv")
-
-# 🧾 Footer
-st.markdown("---")
-st.caption("Built with ❤️ by Jacolby using Streamlit")
