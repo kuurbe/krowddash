@@ -1,58 +1,75 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import os
+import folium
+from streamlit_folium import st_folium
+import numpy as np
 
 st.set_page_config(page_title="KrowdDash", layout="wide")
 
-# 📂 Load available CSVs
+# 📂 Load all CSVs
 DATA_DIR = "data"
 csv_files = [f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
 
-st.sidebar.title("📁 Select Dataset")
-selected_file = st.sidebar.selectbox("Choose a file to explore", csv_files)
-
-# 📊 Load selected data
 @st.cache_data
-def load_data(file):
-    return pd.read_csv(os.path.join(DATA_DIR, file))
+def load_all_data():
+    data_dict = {}
+    for file in csv_files:
+        df = pd.read_csv(os.path.join(DATA_DIR, file))
+        df["source"] = file.replace("_clean.csv", "")
+        data_dict[file] = df
+    return pd.concat(data_dict.values(), ignore_index=True)
 
-df = load_data(selected_file)
+df_all = load_all_data()
 
-# 🧪 Auto-detect filterable columns
-filter_cols = [col for col in df.columns if df[col].nunique() < 50 and df[col].dtype == "object"]
-st.sidebar.title("🔍 Filters")
-for col in filter_cols:
-    options = st.sidebar.multiselect(f"{col}", df[col].unique())
-    if options:
-        df = df[df[col].isin(options)]
+# 🧪 Simulate foot traffic if missing
+if "foot_traffic" not in df_all.columns:
+    df_all["foot_traffic"] = np.random.randint(10, 500, size=len(df_all))
 
-# 📈 Dashboard
-st.title(f"KrowdDash: {selected_file.replace('_clean.csv','').title()}")
+# 🗺️ Heatmap tab
+st.title("🧭 All-in-One Insights: Heatmap + Stats")
 
-# 🧮 Summary
+# 🔍 Filters
+with st.sidebar:
+    st.header("Filter Options")
+    selected_sources = st.multiselect("Data Sources", df_all["source"].unique())
+    selected_city = st.multiselect("City", df_all["City"].unique() if "City" in df_all.columns else [])
+    selected_hour = st.slider("Hour of Day", 0, 23, (0, 23))
+
+# 🧹 Apply filters
+filtered_df = df_all.copy()
+if selected_sources:
+    filtered_df = filtered_df[filtered_df["source"].isin(selected_sources)]
+if selected_city:
+    filtered_df = filtered_df[filtered_df["City"].isin(selected_city)]
+if "Timestamp" in filtered_df.columns:
+    filtered_df["hour"] = pd.to_datetime(filtered_df["Timestamp"], errors="coerce").dt.hour
+    filtered_df = filtered_df[(filtered_df["hour"] >= selected_hour[0]) & (filtered_df["hour"] <= selected_hour[1])]
+
+# 📊 Summary
 st.subheader("📊 Summary Stats")
-st.write(df.describe(include="all"))
+st.write(filtered_df.describe(include="all"))
 
-# 📉 Chart Options
-st.subheader("📈 Chart Builder")
-numeric_cols = df.select_dtypes(include="number").columns.tolist()
-categorical_cols = df.select_dtypes(include="object").columns.tolist()
-
-x_axis = st.selectbox("X-axis", categorical_cols)
-y_axis = st.selectbox("Y-axis", numeric_cols)
-
-if x_axis and y_axis:
-    chart = px.bar(df.groupby(x_axis)[y_axis].mean().reset_index(), x=x_axis, y=y_axis,
-                   title=f"Average {y_axis} by {x_axis}")
-    st.plotly_chart(chart, use_container_width=True)
+# 🗺️ Heatmap
+st.subheader("🗺️ Activity Heatmap")
+if "Latitude" in filtered_df.columns and "Longitude" in filtered_df.columns:
+    m = folium.Map(location=[filtered_df["Latitude"].mean(), filtered_df["Longitude"].mean()], zoom_start=12)
+    for _, row in filtered_df.iterrows():
+        folium.CircleMarker(
+            location=[row["Latitude"], row["Longitude"]],
+            radius=min(row["foot_traffic"] / 50, 10),
+            popup=row["source"],
+            color="blue",
+            fill=True,
+            fill_opacity=0.6
+        ).add_to(m)
+    st_folium(m, width=900, height=500)
+else:
+    st.warning("No location data found (Latitude/Longitude missing).")
 
 # 📋 Data Table
 st.subheader("📄 Filtered Data")
-st.dataframe(df)
+st.dataframe(filtered_df)
 
 # 📥 Export
-st.download_button("Download Filtered CSV", df.to_csv(index=False), "filtered_data.csv", "text/csv")
-
-st.markdown("---")
-st.caption("Built with ❤️ by Jacolby using Streamlit")
+st.download_button("Download Filtered Data", filtered_df.to_csv(index=False), "all_insights.csv", "text/csv")
